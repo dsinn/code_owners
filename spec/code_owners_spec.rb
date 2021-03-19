@@ -13,7 +13,7 @@ RSpec.describe CodeOwners do |rspec|
       )
       expect(CodeOwners.ownerships).to eq(
         [
-          { file: "pat2file", owner: "own2", line: "2", pattern: "pat2*" },
+          { file: "pat2file", owner: "own2", line: 2, pattern: "pat2*" },
           { file: "unowned/file", owner: "UNOWNED", line: nil, pattern: nil }
         ]
       )

@@ -1,4 +1,6 @@
 require "code_owners/version"
+require "fileutils"
+require "pathname"
 require "tempfile"
 
 module CodeOwners
@@ -25,10 +27,11 @@ module CodeOwners
         if line.empty?
           { file: file, owner: NO_OWNER, line: nil, pattern: nil }
         else
+          line_int = line.to_i
           {
             file: file,
-            owner: patterns.fetch(line.to_i-1)[1],
-            line: line,
+            owner: patterns.fetch(line_int - 1)[1],
+            line: line_int,
             pattern: pattern
           }
         end
@@ -36,10 +39,14 @@ module CodeOwners
     end
 
     def search_codeowners_file
+      return @@codeowners_path if defined? @@codeowners_path
       paths = ["CODEOWNERS", "docs/CODEOWNERS", ".github/CODEOWNERS"]
       for path in paths
         current_file_path = File.join(current_repo_path, path)
-        return current_file_path if File.exist?(current_file_path)
+        if File.exist?(current_file_path)
+          @@codeowners_path = current_file_path
+          return @@codeowners_path
+        end
       end
       abort("[ERROR] CODEOWNERS file does not exist.")
     end
@@ -47,21 +54,22 @@ module CodeOwners
     # read the github file and spit out a slightly formatted list of patterns and their owners
     # Empty/invalid/commented lines are still included in order to preserve line numbering
     def pattern_owners
+      return @@patterns if defined? @@patterns
       codeowner_path = search_codeowners_file
-      patterns = []
+      @@patterns = []
       File.read(codeowner_path).split("\n").each_with_index { |line, i|
         path_owner = line.split(/\s+@/, 2)
         if line.match(/^\s*(?:#.*)?$/)
-          patterns.push ['', ''] # Comment/empty line
+          @@patterns.push ['', ''] # Comment/empty line
         elsif path_owner.length != 2 || (path_owner[0].empty? && !path_owner[1].empty?)
           log "Parse error line #{(i+1).to_s}: \"#{line}\""
-          patterns.push ['', ''] # Invalid line
+          @@patterns.push ['', ''] # Invalid line
         else
           path_owner[1] = '@'+path_owner[1]
-          patterns.push path_owner
+          @@patterns.push path_owner
         end
       }
-      return patterns
+      return @@patterns
     end
 
     def git_owner_info(patterns)
@@ -79,6 +87,47 @@ module CodeOwners
         file.rewind
         `cd #{current_repo_path} && git ls-files | xargs -- git -c \"core.excludesfile=#{file.path}\" check-ignore --no-index -v -n`
       end
+    end
+
+    def prune
+      used_patterns = CodeOwners.pattern_owners.map { |p| p[0].empty? }
+      codeowners_path = CodeOwners.search_codeowners_file
+      ownerships.each do |ownership_status|
+        used_patterns[ownership_status[:line] - 1] = true if ownership_status[:line]
+      end
+
+      unused_rules = []
+      new_codeowners = Tempfile.new('new_codeowners')
+      File.readlines(codeowners_path).each_with_index do |line, i|
+        if used_patterns[i]
+          new_codeowners.puts line
+        else
+          unused_rules.push line
+        end
+      end
+      new_codeowners.close
+
+      if unused_rules.empty?
+        puts 'All of the rules are used. Nothing to do here. :)'
+        return
+      end
+
+      puts "Found the following unused rules:\n\n"
+      unused_rules.each do |rule|
+        puts rule
+      end
+
+      unless Pathname.new(codeowners_path).writable?
+        STDERR.puts "No write access to #{codeowners_path}; file not written."
+        exit 4
+      end
+
+      suffix = nil
+      suffix = (suffix || 1) + 1 while File.exist?(backup_file = "#{codeowners_path}.bak#{suffix}")
+      FileUtils.mv(codeowners_path, backup_file)
+      puts "\nBackup file created at #{backup_file}"
+      FileUtils.mv(new_codeowners.path, codeowners_path)
+      puts "\nUpdated #{codeowners_path}"
     end
 
     private

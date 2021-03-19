@@ -26,6 +26,8 @@ OptionParser.new do |opts|
   end
   opts.on('-v', '--version', TrueClass, 'Display the version of the gem') do |_|
     puts "Version: #{CodeOwners::VERSION}"
+  opts.on('-p', '--prune', TrueClass, 'Remove unused rules from the codeowners file') do |p|
+    CodeOwners.prune
     exit 0
   end
 end.parse!
